@@ -1,0 +1,150 @@
+"use client";
+
+import { useEffect, useState, useCallback } from "react";
+import { useRouter, usePathname, useParams } from "next/navigation";
+import Link from "next/link";
+import { supabase } from "@/lib/supabaseClient";
+import { EmpresaContext } from "@/lib/EmpresaContext";
+
+const TABS = [
+  { href: "cuentas", label: "Cuentas" },
+  { href: "transacciones", label: "Diario" },
+  { href: "mayor", label: "Mayor" },
+  { href: "balance", label: "Balance de Comprobación" },
+  { href: "resultados", label: "Estado de Resultados" },
+  { href: "balance-general", label: "Balance General" },
+];
+
+export default function EmpresaLayout({ children }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useParams();
+  const empresaId = params.id;
+
+  const [empresa, setEmpresa] = useState(null);
+  const [cuentas, setCuentas] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [errorCarga, setErrorCarga] = useState(null);
+
+  const recargarCuentas = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("cuentas")
+      .select("*")
+      .eq("empresa_id", empresaId)
+      .order("codigo");
+    if (!error) setCuentas(data || []);
+    return { data, error };
+  }, [empresaId]);
+
+  useEffect(() => {
+    let activo = true;
+
+    async function cargar() {
+      const { data: sesion } = await supabase.auth.getSession();
+      if (!sesion.session) {
+        router.replace("/login");
+        return;
+      }
+
+      const { data: emp, error: errEmpresa } = await supabase
+        .from("empresas")
+        .select("*")
+        .eq("id", empresaId)
+        .single();
+
+      if (!activo) return;
+
+      if (errEmpresa || !emp) {
+        // No existe o no pertenece al usuario (RLS lo bloquea)
+        router.replace("/dashboard");
+        return;
+      }
+
+      setEmpresa(emp);
+
+      const { data: cts, error: errCuentas } = await supabase
+        .from("cuentas")
+        .select("*")
+        .eq("empresa_id", empresaId)
+        .order("codigo");
+
+      if (!activo) return;
+
+      if (errCuentas) {
+        setErrorCarga(errCuentas.message);
+      } else {
+        setCuentas(cts || []);
+      }
+      setCargando(false);
+    }
+
+    cargar();
+    return () => {
+      activo = false;
+    };
+  }, [empresaId, router]);
+
+  if (cargando) {
+    return (
+      <main className="min-h-screen flex items-center justify-center">
+        <p className="text-inkSoft">Cargando…</p>
+      </main>
+    );
+  }
+
+  return (
+    <EmpresaContext.Provider value={{ empresa, cuentas, empresaId, recargarCuentas }}>
+      <main className="min-h-screen px-6 py-8 max-w-5xl mx-auto">
+        <header className="flex items-center justify-between mb-6 no-print">
+          <div>
+            <Link
+              href="/dashboard"
+              className="text-xs text-inkSoft hover:text-ink underline underline-offset-2"
+            >
+              ← Mis empresas
+            </Link>
+            <h1 className="font-display text-2xl font-semibold mt-1">
+              {empresa?.nombre}
+            </h1>
+            <span
+              className={`inline-block text-xs px-2 py-0.5 rounded-sm mt-1 ${
+                empresa?.tipo === "comercial"
+                  ? "bg-brass/20 text-brassDark"
+                  : "bg-ledger/20 text-ledgerDark"
+              }`}
+            >
+              {empresa?.tipo === "comercial" ? "Comercial" : "Servicio"}
+            </span>
+          </div>
+        </header>
+
+        <nav className="flex flex-wrap gap-1 border-b border-paperLine mb-8 no-print">
+          {TABS.map((tab) => {
+            const activa = pathname?.endsWith(`/${tab.href}`);
+            return (
+              <Link
+                key={tab.href}
+                href={`/empresa/${empresaId}/${tab.href}`}
+                className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                  activa
+                    ? "border-brass text-ink"
+                    : "border-transparent text-inkSoft hover:text-ink"
+                }`}
+              >
+                {tab.label}
+              </Link>
+            );
+          })}
+        </nav>
+
+        {errorCarga && (
+          <p className="text-sm text-rust mb-4">
+            No se pudieron cargar las cuentas: {errorCarga}
+          </p>
+        )}
+
+        {children}
+      </main>
+    </EmpresaContext.Provider>
+  );
+}
