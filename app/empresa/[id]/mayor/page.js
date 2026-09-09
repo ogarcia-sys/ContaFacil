@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useEmpresa } from "@/lib/EmpresaContext";
 import { obtenerCuentasConMovimientos, formatoMoneda } from "@/lib/contabilidad";
+import CuentaCombobox from "@/lib/CuentaCombobox";
 
 export default function MayorPage() {
   const { cuentas, empresaId } = useEmpresa();
@@ -38,18 +39,22 @@ export default function MayorPage() {
       <div className="flex items-center justify-between mb-4 no-print">
         <h2 className="font-display text-lg font-semibold">Libro Mayor</h2>
         <div className="flex items-center gap-3">
-          <select
-            value={cuentaId}
-            onChange={(e) => setCuentaId(e.target.value)}
-            className="border border-paperLine rounded-sm px-2 py-1.5 text-sm"
-          >
-            <option value="todas">Todas las cuentas</option>
-            {cuentas.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.codigo} — {c.nombre}
-              </option>
-            ))}
-          </select>
+          <div className="w-64">
+            <CuentaCombobox
+              cuentas={cuentas}
+              value={cuentaId === "todas" ? "" : cuentaId}
+              onChange={(id) => setCuentaId(id || "todas")}
+              placeholder="Buscar cuenta… (vacío = todas)"
+            />
+          </div>
+          {cuentaId !== "todas" && (
+            <button
+              onClick={() => setCuentaId("todas")}
+              className="text-xs text-inkSoft hover:text-ink underline underline-offset-2"
+            >
+              Ver todas
+            </button>
+          )}
           <button
             onClick={() => window.print()}
             className="text-xs text-inkSoft hover:text-ink underline underline-offset-2"

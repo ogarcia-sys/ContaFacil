@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useEmpresa } from "@/lib/EmpresaContext";
 import { obtenerPartidas, formatoMoneda } from "@/lib/contabilidad";
+import CuentaCombobox from "@/lib/CuentaCombobox";
 
 function lineaVacia() {
   return { cuenta_id: "", debe: "", haber: "" };
@@ -173,18 +174,11 @@ export default function TransaccionesPage() {
                 {lineas.map((l, idx) => (
                   <tr key={idx} className="border-t border-paperLine">
                     <td className="px-3 py-1.5">
-                      <select
+                      <CuentaCombobox
+                        cuentas={cuentas}
                         value={l.cuenta_id}
-                        onChange={(e) => actualizarLinea(idx, "cuenta_id", e.target.value)}
-                        className="w-full border border-paperLine rounded-sm px-2 py-1 text-sm"
-                      >
-                        <option value="">Selecciona una cuenta…</option>
-                        {cuentas.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.codigo} — {c.nombre}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(id) => actualizarLinea(idx, "cuenta_id", id)}
+                      />
                     </td>
                     <td className="px-3 py-1.5">
                       <input
