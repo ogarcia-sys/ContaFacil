@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useEmpresa } from "@/lib/EmpresaContext";
+import { CATALOGO_COMPLETO } from "@/lib/catalogoCuentas";
 
 const CLASES = ["Activo", "Pasivo", "Capital", "Ingreso", "Costo", "Gasto"];
 
@@ -18,6 +19,34 @@ export default function CuentasPage() {
   });
   const [error, setError] = useState(null);
   const [guardando, setGuardando] = useState(false);
+  const [importando, setImportando] = useState(false);
+  const [mensajeImport, setMensajeImport] = useState(null);
+
+  const faltantes = CATALOGO_COMPLETO.filter(
+    (c) => !cuentas.some((existente) => existente.codigo === c.codigo)
+  );
+
+  async function importarFaltantes() {
+    if (faltantes.length === 0) return;
+    setImportando(true);
+    setMensajeImport(null);
+    const { error: err } = await supabase.from("cuentas").insert(
+      faltantes.map((c) => ({
+        empresa_id: empresaId,
+        codigo: c.codigo,
+        nombre: c.nombre,
+        clase: c.clase,
+        tipo_saldo: c.tipo_saldo,
+      }))
+    );
+    setImportando(false);
+    if (err) {
+      setMensajeImport("No se pudo importar: " + err.message);
+      return;
+    }
+    setMensajeImport(`Se agregaron ${faltantes.length} cuentas nuevas.`);
+    recargarCuentas();
+  }
 
   function empezarEdicion(cuenta) {
     setEditandoId(cuenta.id);
@@ -90,7 +119,31 @@ export default function CuentasPage() {
 
   return (
     <div>
-      <h2 className="font-display text-lg font-semibold mb-4">Catálogo de Cuentas</h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="font-display text-lg font-semibold">Catálogo de Cuentas</h2>
+        {faltantes.length > 0 && (
+          <div className="text-right no-print">
+            <button
+              onClick={importarFaltantes}
+              disabled={importando}
+              className="bg-brassDark text-paper px-3 py-1.5 rounded-sm text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-60"
+            >
+              {importando
+                ? "Importando…"
+                : `Importar ${faltantes.length} cuentas del catálogo`}
+            </button>
+            {mensajeImport && (
+              <p
+                className={`text-xs mt-1 ${
+                  mensajeImport.startsWith("No se pudo") ? "text-rust" : "text-ledger"
+                }`}
+              >
+                {mensajeImport}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="bg-[#F7F4EA] border border-paperLine rounded-sm overflow-hidden mb-8">
         <table className="w-full text-sm">
