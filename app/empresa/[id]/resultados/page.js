@@ -4,21 +4,25 @@ import { useEffect, useState } from "react";
 import { useEmpresa } from "@/lib/EmpresaContext";
 import {
   obtenerCuentasConMovimientos,
+  filtrarMovimientosRango,
   calcularEstadoResultados,
   formatoMoneda,
 } from "@/lib/contabilidad";
+import { EncabezadoRango, FirmasEstadosFinancieros } from "@/lib/EncabezadoReporte";
 
 export default function ResultadosPage() {
   const { empresa, empresaId } = useEmpresa();
   const [cargando, setCargando] = useState(true);
-  const [datos, setDatos] = useState(null);
+  const [cuentasBase, setCuentasBase] = useState([]);
+  const [fechaInicio, setFechaInicio] = useState("");
+  const [fechaFin, setFechaFin] = useState(() => new Date().toISOString().slice(0, 10));
 
   useEffect(() => {
     let activo = true;
     setCargando(true);
     obtenerCuentasConMovimientos(empresaId).then((cuentas) => {
       if (!activo) return;
-      setDatos(calcularEstadoResultados(cuentas));
+      setCuentasBase(cuentas);
       setCargando(false);
     });
     return () => {
@@ -26,10 +30,12 @@ export default function ResultadosPage() {
     };
   }, [empresaId]);
 
-  if (cargando || !datos) {
+  if (cargando) {
     return <p className="text-inkSoft text-sm">Calculando…</p>;
   }
 
+  const cuentasFiltradas = filtrarMovimientosRango(cuentasBase, fechaInicio, fechaFin);
+  const datos = calcularEstadoResultados(cuentasFiltradas);
   const esComercial = empresa?.tipo === "comercial";
   const sinDatos = datos.ingresos.length === 0 && datos.gastos.length === 0;
 
@@ -38,7 +44,13 @@ export default function ResultadosPage() {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="font-display text-lg font-semibold">Estado de Resultados</h2>
-          <p className="text-xs text-inkSoft">{empresa?.nombre}</p>
+          <p className="text-xs text-inkSoft">
+            {empresa?.nombre}
+            {fechaInicio || fechaFin
+              ? ` — Del ${fechaInicio || "…"} al ${fechaFin || "…"}`
+              : ""}
+            {empresa?.moneda ? ` — ${empresa.moneda}` : ""}
+          </p>
         </div>
         <button
           onClick={() => window.print()}
@@ -47,6 +59,13 @@ export default function ResultadosPage() {
           Imprimir
         </button>
       </div>
+
+      <EncabezadoRango
+        fechaInicio={fechaInicio}
+        fechaFin={fechaFin}
+        onFechaInicio={setFechaInicio}
+        onFechaFin={setFechaFin}
+      />
 
       {sinDatos ? (
         <p className="text-inkSoft text-sm">Todavía no hay movimientos registrados.</p>
@@ -109,6 +128,8 @@ export default function ResultadosPage() {
           </table>
         </div>
       )}
+
+      <FirmasEstadosFinancieros />
     </div>
   );
 }

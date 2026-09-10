@@ -4,22 +4,26 @@ import { useEffect, useState } from "react";
 import { useEmpresa } from "@/lib/EmpresaContext";
 import {
   obtenerCuentasConMovimientos,
+  filtrarMovimientosHasta,
   calcularBalanceComprobacion,
   formatoMoneda,
 } from "@/lib/contabilidad";
+import { EncabezadoAlFecha, FirmasEstadosFinancieros } from "@/lib/EncabezadoReporte";
 
 export default function BalancePage() {
   const { empresa, empresaId } = useEmpresa();
   const [cargando, setCargando] = useState(true);
-  const [resultado, setResultado] = useState(null);
+  const [cuentasBase, setCuentasBase] = useState([]);
+  const [fechaCorte, setFechaCorte] = useState(
+    () => new Date().toISOString().slice(0, 10)
+  );
 
   useEffect(() => {
     let activo = true;
     setCargando(true);
     obtenerCuentasConMovimientos(empresaId).then((cuentas) => {
       if (!activo) return;
-      const conMov = cuentas.filter((c) => (c.movimientos || []).length > 0);
-      setResultado(calcularBalanceComprobacion(conMov));
+      setCuentasBase(cuentas);
       setCargando(false);
     });
     return () => {
@@ -27,10 +31,13 @@ export default function BalancePage() {
     };
   }, [empresaId]);
 
-  if (cargando || !resultado) {
+  if (cargando) {
     return <p className="text-inkSoft text-sm">Calculando balance…</p>;
   }
 
+  const cuentasFiltradas = filtrarMovimientosHasta(cuentasBase, fechaCorte);
+  const conMov = cuentasFiltradas.filter((c) => (c.movimientos || []).length > 0);
+  const resultado = calcularBalanceComprobacion(conMov);
   const { filas, totales } = resultado;
   const cuadra = Math.abs(totales.saldoDeudor - totales.saldoAcreedor) < 0.01;
 
@@ -39,7 +46,11 @@ export default function BalancePage() {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="font-display text-lg font-semibold">Balance de Comprobación</h2>
-          <p className="text-xs text-inkSoft">{empresa?.nombre}</p>
+          <p className="text-xs text-inkSoft">
+            {empresa?.nombre}
+            {fechaCorte ? ` — Al ${fechaCorte}` : ""}
+            {empresa?.moneda ? ` — ${empresa.moneda}` : ""}
+          </p>
         </div>
         <button
           onClick={() => window.print()}
@@ -48,6 +59,8 @@ export default function BalancePage() {
           Imprimir
         </button>
       </div>
+
+      <EncabezadoAlFecha fechaCorte={fechaCorte} onFechaCorte={setFechaCorte} />
 
       {filas.length === 0 ? (
         <p className="text-inkSoft text-sm">Todavía no hay movimientos registrados.</p>
@@ -112,6 +125,8 @@ export default function BalancePage() {
           ? "✓ El balance cuadra: las sumas deudoras y acreedoras son iguales."
           : "⚠ El balance no cuadra — revisa las partidas registradas."}
       </p>
+
+      <FirmasEstadosFinancieros />
     </div>
   );
 }

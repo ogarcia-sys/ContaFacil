@@ -36,6 +36,20 @@ export default function EmpresaLayout({ children }) {
     return { data, error };
   }, [empresaId]);
 
+  const actualizarEmpresa = useCallback(
+    async (cambios) => {
+      const { data, error } = await supabase
+        .from("empresas")
+        .update(cambios)
+        .eq("id", empresaId)
+        .select()
+        .single();
+      if (!error && data) setEmpresa(data);
+      return { data, error };
+    },
+    [empresaId]
+  );
+
   useEffect(() => {
     let activo = true;
 
@@ -93,7 +107,9 @@ export default function EmpresaLayout({ children }) {
   }
 
   return (
-    <EmpresaContext.Provider value={{ empresa, cuentas, empresaId, recargarCuentas }}>
+    <EmpresaContext.Provider
+      value={{ empresa, cuentas, empresaId, recargarCuentas, actualizarEmpresa }}
+    >
       <main className="min-h-screen px-6 py-8 max-w-5xl mx-auto">
         <header className="flex items-center justify-between mb-6 no-print">
           <div>

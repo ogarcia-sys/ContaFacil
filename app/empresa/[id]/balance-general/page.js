@@ -4,23 +4,27 @@ import { useEffect, useState } from "react";
 import { useEmpresa } from "@/lib/EmpresaContext";
 import {
   obtenerCuentasConMovimientos,
+  filtrarMovimientosHasta,
   calcularEstadoResultados,
   calcularBalanceGeneral,
   formatoMoneda,
 } from "@/lib/contabilidad";
+import { EncabezadoAlFecha, FirmasEstadosFinancieros } from "@/lib/EncabezadoReporte";
 
 export default function BalanceGeneralPage() {
   const { empresa, empresaId } = useEmpresa();
   const [cargando, setCargando] = useState(true);
-  const [datos, setDatos] = useState(null);
+  const [cuentasBase, setCuentasBase] = useState([]);
+  const [fechaCorte, setFechaCorte] = useState(
+    () => new Date().toISOString().slice(0, 10)
+  );
 
   useEffect(() => {
     let activo = true;
     setCargando(true);
     obtenerCuentasConMovimientos(empresaId).then((cuentas) => {
       if (!activo) return;
-      const resultados = calcularEstadoResultados(cuentas);
-      setDatos(calcularBalanceGeneral(cuentas, resultados.utilidadNeta));
+      setCuentasBase(cuentas);
       setCargando(false);
     });
     return () => {
@@ -28,9 +32,13 @@ export default function BalanceGeneralPage() {
     };
   }, [empresaId]);
 
-  if (cargando || !datos) {
+  if (cargando) {
     return <p className="text-inkSoft text-sm">Calculando…</p>;
   }
+
+  const cuentasFiltradas = filtrarMovimientosHasta(cuentasBase, fechaCorte);
+  const resultados = calcularEstadoResultados(cuentasFiltradas);
+  const datos = calcularBalanceGeneral(cuentasFiltradas, resultados.utilidadNeta);
 
   const sinDatos =
     datos.activos.length === 0 && datos.pasivos.length === 0 && datos.capital.length === 0;
@@ -42,7 +50,11 @@ export default function BalanceGeneralPage() {
           <h2 className="font-display text-lg font-semibold">
             Balance General (Estado de Situación Financiera)
           </h2>
-          <p className="text-xs text-inkSoft">{empresa?.nombre}</p>
+          <p className="text-xs text-inkSoft">
+            {empresa?.nombre}
+            {fechaCorte ? ` — Al ${fechaCorte}` : ""}
+            {empresa?.moneda ? ` — ${empresa.moneda}` : ""}
+          </p>
         </div>
         <button
           onClick={() => window.print()}
@@ -51,6 +63,8 @@ export default function BalanceGeneralPage() {
           Imprimir
         </button>
       </div>
+
+      <EncabezadoAlFecha fechaCorte={fechaCorte} onFechaCorte={setFechaCorte} />
 
       {sinDatos ? (
         <p className="text-inkSoft text-sm">Todavía no hay movimientos registrados.</p>
@@ -164,6 +178,8 @@ export default function BalanceGeneralPage() {
           </p>
         </>
       )}
+
+      <FirmasEstadosFinancieros />
     </div>
   );
 }
