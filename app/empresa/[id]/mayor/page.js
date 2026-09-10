@@ -37,7 +37,7 @@ export default function MayorPage() {
 
   function exportarMayor() {
     const filas = [
-      ["Cuenta", "Partida N.°", "Fecha", "Movimientos de este día", "Debe", "Haber", "Saldo"],
+      ["Cuenta", "Partida N.°", "Fecha", "Descripción", "Debe", "Haber", "Saldo"],
     ];
     for (const cuenta of conMovimientos) {
       const movs = [...cuenta.movimientos].sort(
@@ -51,7 +51,7 @@ export default function MayorPage() {
           "",
           m.transacciones?.numero_partida,
           m.transacciones?.fecha,
-          m.transacciones?.descripcion,
+          "Movimientos del día",
           m.debe > 0 ? m.debe : "",
           m.haber > 0 ? m.haber : "",
           saldo,
@@ -140,7 +140,7 @@ export default function MayorPage() {
                     <tr className="text-left text-xs text-inkSoft border-b border-paperLine">
                       <th className="px-3 py-2 font-medium">Partida</th>
                       <th className="px-3 py-2 font-medium">Fecha</th>
-                      <th className="px-3 py-2 font-medium">Movimientos de este día</th>
+                      <th className="px-3 py-2 font-medium">Descripción</th>
                       <th className="px-3 py-2 font-medium w-24 text-right">Debe</th>
                       <th className="px-3 py-2 font-medium w-24 text-right">Haber</th>
                       <th className="px-3 py-2 font-medium w-28 text-right">Saldo</th>
@@ -153,9 +153,7 @@ export default function MayorPage() {
                           N.° {m.transacciones?.numero_partida}
                         </td>
                         <td className="px-3 py-1.5">{m.transacciones?.fecha}</td>
-                        <td className="px-3 py-1.5 text-inkSoft">
-                          {m.transacciones?.descripcion}
-                        </td>
+                        <td className="px-3 py-1.5 text-inkSoft">Movimientos del día</td>
                         <td className="px-3 py-1.5 font-num text-right tabular">
                           {m.debe > 0 ? formatoMoneda(m.debe) : ""}
                         </td>
