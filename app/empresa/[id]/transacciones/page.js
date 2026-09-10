@@ -428,7 +428,7 @@ export default function TransaccionesPage() {
             return (
               <div
                 key={p.id}
-                className="bg-[#F7F4EA] border border-paperLine rounded-sm overflow-hidden"
+                className="partida-imprimir bg-[#F7F4EA] border border-paperLine rounded-sm overflow-hidden"
               >
                 <div className="flex items-center justify-between px-4 py-2 bg-paperLine/30 text-xs">
                   <span className="font-medium">
