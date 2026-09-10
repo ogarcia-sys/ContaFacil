@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { useEmpresa } from "@/lib/EmpresaContext";
 import { obtenerPartidas, formatoMoneda } from "@/lib/contabilidad";
 import CuentaCombobox from "@/lib/CuentaCombobox";
+import { exportarAExcel } from "@/lib/exportarExcel";
 
 function lineaVacia() {
   return { cuenta_id: "", debe: "", haber: "" };
@@ -55,6 +56,25 @@ export default function TransaccionesPage() {
     [form.lineas]
   );
   const cuadra = totalDebe === totalHaber && totalDebe > 0;
+
+  function exportarDiario() {
+    const filas = [["Partida N.°", "Fecha", "Cuenta", "Debe", "Haber", "Elaborado por", "Revisado por"]];
+    for (const p of partidas) {
+      p.movimientos.forEach((m, i) => {
+        filas.push([
+          i === 0 ? p.numero_partida : "",
+          i === 0 ? p.fecha : "",
+          `${m.cuentas.codigo} — ${m.cuentas.nombre}`,
+          m.debe > 0 ? m.debe : "",
+          m.haber > 0 ? m.haber : "",
+          i === 0 ? p.elaborado_por || "" : "",
+          i === 0 ? p.revisado_por || "" : "",
+        ]);
+      });
+      filas.push([]);
+    }
+    exportarAExcel("libro-diario", [{ nombre: "Libro Diario", filas }]);
+  }
 
   function actualizarCampo(campo, valor) {
     setForm((f) => ({ ...f, [campo]: valor }));
@@ -415,6 +435,15 @@ export default function TransaccionesPage() {
           Imprimir
         </button>
       </div>
+
+      {partidas.length > 0 && (
+        <button
+          onClick={exportarDiario}
+          className="text-xs text-ledgerDark hover:underline no-print mb-4 inline-block"
+        >
+          Exportar a Excel
+        </button>
+      )}
 
       {cargandoPartidas ? (
         <p className="text-inkSoft text-sm">Cargando partidas…</p>

@@ -9,6 +9,7 @@ import {
   formatoMoneda,
 } from "@/lib/contabilidad";
 import { EncabezadoRango, FirmasEstadosFinancieros } from "@/lib/EncabezadoReporte";
+import { exportarAExcel } from "@/lib/exportarExcel";
 
 export default function ResultadosPage() {
   const { empresa, empresaId } = useEmpresa();
@@ -39,6 +40,37 @@ export default function ResultadosPage() {
   const esComercial = empresa?.tipo === "comercial";
   const sinDatos = datos.ingresos.length === 0 && datos.gastos.length === 0;
 
+  function exportar() {
+    const filas = [
+      [empresa?.nombre || "Estado de Resultados"],
+      [`Del ${fechaInicio || "…"} al ${fechaFin || "…"}`, empresa?.moneda || ""],
+      [],
+      ["Ingresos"],
+      ...datos.ingresos.map((l) => ["", l.cuenta.nombre, l.monto]),
+      ["", "Total Ingresos", datos.totalIngresos],
+      [],
+    ];
+    if (esComercial) {
+      filas.push(
+        ["Costos"],
+        ...datos.costos.map((l) => ["", l.cuenta.nombre, l.monto]),
+        ["", "Total Costos", -datos.totalCostos],
+        ["", "Utilidad Bruta", datos.utilidadBruta],
+        []
+      );
+    }
+    filas.push(
+      ["Gastos de Operación"],
+      ...datos.gastos.map((l) => ["", l.cuenta.nombre, l.monto]),
+      ["", "Total Gastos", -datos.totalGastos],
+      [],
+      ["", datos.utilidadNeta >= 0 ? "Utilidad Neta" : "Pérdida Neta", datos.utilidadNeta]
+    );
+    exportarAExcel(`estado-resultados-${fechaFin || "actual"}`, [
+      { nombre: "Estado de Resultados", filas },
+    ]);
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
@@ -59,6 +91,15 @@ export default function ResultadosPage() {
           Imprimir
         </button>
       </div>
+
+      {!sinDatos && (
+        <button
+          onClick={exportar}
+          className="text-xs text-ledgerDark hover:underline no-print mb-4 inline-block"
+        >
+          Exportar a Excel
+        </button>
+      )}
 
       <EncabezadoRango
         fechaInicio={fechaInicio}

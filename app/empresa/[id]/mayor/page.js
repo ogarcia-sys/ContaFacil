@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useEmpresa } from "@/lib/EmpresaContext";
 import { obtenerCuentasConMovimientos, formatoMoneda } from "@/lib/contabilidad";
 import CuentaCombobox from "@/lib/CuentaCombobox";
+import { exportarAExcel } from "@/lib/exportarExcel";
 
 export default function MayorPage() {
   const { cuentas, empresaId } = useEmpresa();
@@ -34,6 +35,33 @@ export default function MayorPage() {
 
   const conMovimientos = cuentasAMostrar.filter((c) => (c.movimientos || []).length > 0);
 
+  function exportarMayor() {
+    const filas = [
+      ["Cuenta", "Partida N.°", "Fecha", "Movimientos de este día", "Debe", "Haber", "Saldo"],
+    ];
+    for (const cuenta of conMovimientos) {
+      const movs = [...cuenta.movimientos].sort(
+        (a, b) => (a.transacciones?.numero_partida ?? 0) - (b.transacciones?.numero_partida ?? 0)
+      );
+      let saldo = 0;
+      filas.push([`${cuenta.codigo} — ${cuenta.nombre}`]);
+      for (const m of movs) {
+        saldo += Number(m.debe) - Number(m.haber);
+        filas.push([
+          "",
+          m.transacciones?.numero_partida,
+          m.transacciones?.fecha,
+          m.transacciones?.descripcion,
+          m.debe > 0 ? m.debe : "",
+          m.haber > 0 ? m.haber : "",
+          saldo,
+        ]);
+      }
+      filas.push([]);
+    }
+    exportarAExcel("libro-mayor", [{ nombre: "Libro Mayor", filas }]);
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4 no-print">
@@ -61,6 +89,14 @@ export default function MayorPage() {
           >
             Imprimir
           </button>
+          {conMovimientos.length > 0 && (
+            <button
+              onClick={exportarMayor}
+              className="text-xs text-ledgerDark hover:underline"
+            >
+              Exportar a Excel
+            </button>
+          )}
         </div>
       </div>
 
@@ -104,7 +140,7 @@ export default function MayorPage() {
                     <tr className="text-left text-xs text-inkSoft border-b border-paperLine">
                       <th className="px-3 py-2 font-medium">Partida</th>
                       <th className="px-3 py-2 font-medium">Fecha</th>
-                      <th className="px-3 py-2 font-medium">Descripción</th>
+                      <th className="px-3 py-2 font-medium">Movimientos de este día</th>
                       <th className="px-3 py-2 font-medium w-24 text-right">Debe</th>
                       <th className="px-3 py-2 font-medium w-24 text-right">Haber</th>
                       <th className="px-3 py-2 font-medium w-28 text-right">Saldo</th>

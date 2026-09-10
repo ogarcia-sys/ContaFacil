@@ -9,6 +9,7 @@ import {
   formatoMoneda,
 } from "@/lib/contabilidad";
 import { EncabezadoAlFecha, FirmasEstadosFinancieros } from "@/lib/EncabezadoReporte";
+import { exportarAExcel } from "@/lib/exportarExcel";
 
 export default function BalancePage() {
   const { empresa, empresaId } = useEmpresa();
@@ -41,6 +42,29 @@ export default function BalancePage() {
   const { filas, totales } = resultado;
   const cuadra = Math.abs(totales.saldoDeudor - totales.saldoAcreedor) < 0.01;
 
+  function exportar() {
+    const encabezado = [
+      [empresa?.nombre || "Balance de Comprobación"],
+      [fechaCorte ? `Al ${fechaCorte}` : "", empresa?.moneda || ""],
+      [],
+      ["Código", "Cuenta", "Suma Debe", "Suma Haber", "Saldo Deudor", "Saldo Acreedor"],
+    ];
+    const cuerpo = filas.map((f) => [
+      f.cuenta.codigo,
+      f.cuenta.nombre,
+      f.sumaDebe,
+      f.sumaHaber,
+      f.saldoDeudor || "",
+      f.saldoAcreedor || "",
+    ]);
+    const pie = [
+      ["", "Totales", totales.sumaDebe, totales.sumaHaber, totales.saldoDeudor, totales.saldoAcreedor],
+    ];
+    exportarAExcel(`balance-comprobacion-${fechaCorte || "actual"}`, [
+      { nombre: "Balance Comprobación", filas: [...encabezado, ...cuerpo, ...pie] },
+    ]);
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
@@ -59,6 +83,15 @@ export default function BalancePage() {
           Imprimir
         </button>
       </div>
+
+      {filas.length > 0 && (
+        <button
+          onClick={exportar}
+          className="text-xs text-ledgerDark hover:underline no-print mb-4 inline-block"
+        >
+          Exportar a Excel
+        </button>
+      )}
 
       <EncabezadoAlFecha fechaCorte={fechaCorte} onFechaCorte={setFechaCorte} />
 

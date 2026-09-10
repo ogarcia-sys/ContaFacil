@@ -10,6 +10,7 @@ import {
   formatoMoneda,
 } from "@/lib/contabilidad";
 import { EncabezadoAlFecha, FirmasEstadosFinancieros } from "@/lib/EncabezadoReporte";
+import { exportarAExcel } from "@/lib/exportarExcel";
 
 export default function BalanceGeneralPage() {
   const { empresa, empresaId } = useEmpresa();
@@ -43,6 +44,35 @@ export default function BalanceGeneralPage() {
   const sinDatos =
     datos.activos.length === 0 && datos.pasivos.length === 0 && datos.capital.length === 0;
 
+  function exportar() {
+    const filas = [
+      [empresa?.nombre || "Balance General"],
+      [fechaCorte ? `Al ${fechaCorte}` : "", empresa?.moneda || ""],
+      [],
+      ["ACTIVO"],
+      ...datos.activos.map((l) => ["", l.cuenta.nombre, l.monto]),
+      ["", "Total Activo", datos.totalActivo],
+      [],
+      ["PASIVO"],
+      ...datos.pasivos.map((l) => ["", l.cuenta.nombre, l.monto]),
+      ["", "Total Pasivo", datos.totalPasivo],
+      [],
+      ["CAPITAL"],
+      ...datos.capital.map((l) => ["", l.cuenta.nombre, l.monto]),
+      [
+        "",
+        datos.utilidadNeta >= 0 ? "Utilidad del periodo" : "Pérdida del periodo",
+        datos.utilidadNeta,
+      ],
+      ["", "Total Capital", datos.totalCapital],
+      [],
+      ["", "Total Pasivo + Capital", datos.totalPasivoCapital],
+    ];
+    exportarAExcel(`balance-general-${fechaCorte || "actual"}`, [
+      { nombre: "Balance General", filas },
+    ]);
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
@@ -63,6 +93,15 @@ export default function BalanceGeneralPage() {
           Imprimir
         </button>
       </div>
+
+      {!sinDatos && (
+        <button
+          onClick={exportar}
+          className="text-xs text-ledgerDark hover:underline no-print mb-4 inline-block"
+        >
+          Exportar a Excel
+        </button>
+      )}
 
       <EncabezadoAlFecha fechaCorte={fechaCorte} onFechaCorte={setFechaCorte} />
 
