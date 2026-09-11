@@ -56,6 +56,25 @@ export default function AdminPage() {
     };
   }, [router]);
 
+  async function eliminarEmpresa(emp) {
+    const escrito = prompt(
+      `Vas a eliminar PERMANENTEMENTE la empresa "${emp.nombre}" de ${
+        emp.propietario_email || "este usuario"
+      }, junto con todas sus cuentas, partidas y movimientos.\n\nPara confirmar, escribe exactamente el nombre de la empresa:`
+    );
+    if (escrito === null) return;
+    if (escrito.trim() !== emp.nombre) {
+      alert("El nombre no coincide. No se eliminó nada.");
+      return;
+    }
+    const { error: errDel } = await supabase.from("empresas").delete().eq("id", emp.id);
+    if (errDel) {
+      alert("No se pudo eliminar: " + errDel.message);
+      return;
+    }
+    setEmpresas((prev) => prev.filter((e) => e.id !== emp.id));
+  }
+
   if (cargando) {
     return (
       <main className="min-h-screen flex items-center justify-center">
@@ -156,6 +175,12 @@ export default function AdminPage() {
                       className="text-brassDark text-xs font-medium hover:underline"
                     >
                       Ver →
+                    </button>
+                    <button
+                      onClick={() => eliminarEmpresa(emp)}
+                      className="text-rust text-xs font-medium hover:underline ml-4"
+                    >
+                      Eliminar
                     </button>
                   </td>
                 </tr>
