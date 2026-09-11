@@ -10,6 +10,7 @@ const TABS = [
   { href: "cuentas", label: "Cuentas" },
   { href: "transacciones", label: "Diario" },
   { href: "mayor", label: "Mayor" },
+  { href: "kardex", label: "Kardex" },
   { href: "balance", label: "Balance de Comprobación" },
   { href: "resultados", label: "Estado de Resultados" },
   { href: "balance-general", label: "Balance General" },
