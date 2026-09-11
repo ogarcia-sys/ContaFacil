@@ -23,7 +23,7 @@ export default function Dashboard() {
         return;
       }
       setUsuario(data.session.user);
-      cargarEmpresas();
+      cargarEmpresas(data.session.user.id);
       supabase.rpc("soy_admin").then(({ data: esAdmin }) => {
         setAdmin(!!esAdmin);
       });
@@ -31,11 +31,12 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function cargarEmpresas() {
+  async function cargarEmpresas(userId) {
     setCargando(true);
     const { data, error } = await supabase
       .from("empresas")
       .select("*")
+      .eq("user_id", userId)
       .order("created_at", { ascending: false });
     if (!error) setEmpresas(data);
     setCargando(false);
@@ -90,6 +91,19 @@ export default function Dashboard() {
     router.replace("/login");
   }
 
+  async function eliminarEmpresa(emp) {
+    const confirmado = confirm(
+      `¿Eliminar "${emp.nombre}"? Esto borra también todas sus cuentas, partidas y movimientos. Esta acción no se puede deshacer.`
+    );
+    if (!confirmado) return;
+    const { error: errDel } = await supabase.from("empresas").delete().eq("id", emp.id);
+    if (errDel) {
+      alert("No se pudo eliminar: " + errDel.message);
+      return;
+    }
+    if (usuario) cargarEmpresas(usuario.id);
+  }
+
   if (cargando) {
     return (
       <main className="min-h-screen flex items-center justify-center">
@@ -140,10 +154,13 @@ export default function Dashboard() {
         ) : (
           <ul className="space-y-2">
             {empresas.map((emp) => (
-              <li key={emp.id}>
+              <li
+                key={emp.id}
+                className="bg-[#F7F4EA] border border-paperLine rounded-sm px-4 py-3 flex items-center justify-between hover:border-brass transition-colors"
+              >
                 <button
                   onClick={() => router.push(`/empresa/${emp.id}/transacciones`)}
-                  className="w-full text-left bg-[#F7F4EA] border border-paperLine rounded-sm px-4 py-3 flex items-center justify-between hover:border-brass transition-colors"
+                  className="flex-1 text-left flex items-center gap-3"
                 >
                   <span className="font-medium">{emp.nombre}</span>
                   <span
@@ -155,6 +172,12 @@ export default function Dashboard() {
                   >
                     {emp.tipo === "comercial" ? "Comercial" : "Servicio"}
                   </span>
+                </button>
+                <button
+                  onClick={() => eliminarEmpresa(emp)}
+                  className="text-xs text-rust hover:underline ml-4 whitespace-nowrap"
+                >
+                  Eliminar
                 </button>
               </li>
             ))}
