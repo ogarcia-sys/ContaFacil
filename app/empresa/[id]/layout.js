@@ -25,6 +25,7 @@ export default function EmpresaLayout({ children }) {
   const [cuentas, setCuentas] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [errorCarga, setErrorCarga] = useState(null);
+  const [usuarioId, setUsuarioId] = useState(null);
 
   const recargarCuentas = useCallback(async () => {
     const { data, error } = await supabase
@@ -59,6 +60,7 @@ export default function EmpresaLayout({ children }) {
         router.replace("/login");
         return;
       }
+      setUsuarioId(sesion.session.user.id);
 
       const { data: emp, error: errEmpresa } = await supabase
         .from("empresas")
@@ -111,6 +113,12 @@ export default function EmpresaLayout({ children }) {
       value={{ empresa, cuentas, empresaId, recargarCuentas, actualizarEmpresa }}
     >
       <main className="min-h-screen px-6 py-8 max-w-5xl mx-auto">
+        {usuarioId && empresa?.user_id && usuarioId !== empresa.user_id && (
+          <div className="no-print mb-6 bg-brass/10 border border-brass/40 rounded-sm px-4 py-2 text-sm">
+            Estás viendo esta empresa en modo administrador (solo lectura) —
+            pertenece a {empresa.propietario_email || "otro usuario"}.
+          </div>
+        )}
         <header className="flex items-center justify-between mb-6 no-print">
           <div>
             <Link

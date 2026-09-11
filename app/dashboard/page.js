@@ -14,6 +14,7 @@ export default function Dashboard() {
   const [tipo, setTipo] = useState("servicio");
   const [creando, setCreando] = useState(false);
   const [error, setError] = useState(null);
+  const [admin, setAdmin] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -23,6 +24,9 @@ export default function Dashboard() {
       }
       setUsuario(data.session.user);
       cargarEmpresas();
+      supabase.rpc("soy_admin").then(({ data: esAdmin }) => {
+        setAdmin(!!esAdmin);
+      });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -48,7 +52,12 @@ export default function Dashboard() {
 
     const { data: empresa, error: errEmpresa } = await supabase
       .from("empresas")
-      .insert({ nombre: nombre.trim(), tipo, user_id: userId })
+      .insert({
+        nombre: nombre.trim(),
+        tipo,
+        user_id: userId,
+        propietario_email: sesion.session.user.email,
+      })
       .select()
       .single();
 
@@ -103,6 +112,21 @@ export default function Dashboard() {
           Cerrar sesión
         </button>
       </header>
+
+      {admin && (
+        <div className="mb-8 bg-brass/10 border border-brass/40 rounded-sm px-4 py-3 flex items-center justify-between">
+          <span className="text-sm">
+            Tienes acceso de administrador: puedes ver (solo lectura) las
+            empresas de todos los usuarios.
+          </span>
+          <button
+            onClick={() => router.push("/admin")}
+            className="text-sm font-medium text-brassDark hover:underline whitespace-nowrap ml-4"
+          >
+            Panel de administrador →
+          </button>
+        </div>
+      )}
 
       <section className="mb-10">
         <h2 className="font-display text-lg font-semibold mb-4">
