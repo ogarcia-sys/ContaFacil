@@ -3,7 +3,13 @@
 import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useEmpresa } from "@/lib/EmpresaContext";
-import { obtenerProductos, obtenerKardex, saldoActual } from "@/lib/kardex";
+import {
+  obtenerProductos,
+  obtenerKardex,
+  saldoActual,
+  ordenarKardex,
+  recalcularSecuencia,
+} from "@/lib/kardex";
 import { formatoMoneda } from "@/lib/contabilidad";
 import CuentaCombobox from "@/lib/CuentaCombobox";
 import { exportarAExcel } from "@/lib/exportarExcel";
@@ -23,6 +29,11 @@ function nuevoMovimientoVacio() {
   };
 }
 
+const TOLERANCIA = 0.005;
+function distinto(a, b) {
+  return Math.abs(Number(a) - Number(b)) > TOLERANCIA;
+}
+
 export default function KardexPage() {
   const { cuentas, empresaId } = useEmpresa();
 
@@ -38,6 +49,7 @@ export default function KardexPage() {
   const [mostrarFormProducto, setMostrarFormProducto] = useState(false);
 
   const [form, setForm] = useState(nuevoMovimientoVacio());
+  const [editandoMovId, setEditandoMovId] = useState(null);
   const [errorMov, setErrorMov] = useState(null);
   const [guardandoMov, setGuardandoMov] = useState(false);
 
@@ -64,6 +76,7 @@ export default function KardexPage() {
   function seleccionarProducto(id) {
     setProductoId(id);
     setForm(nuevoMovimientoVacio());
+    setEditandoMovId(null);
     setErrorMov(null);
     cargarMovimientos(id);
   }
@@ -107,54 +120,78 @@ export default function KardexPage() {
     if (creado) seleccionarProducto(creado.id);
   }
 
-  async function registrarMovimiento(e) {
-    e.preventDefault();
-    setErrorMov(null);
+  function glosaMovimiento(tipo, descripcion) {
+    const base =
+      tipo === "entrada"
+        ? `Entrada de inventario — ${producto.nombre}`
+        : `Salida de inventario (costo de venta) — ${producto.nombre}`;
+    return descripcion ? `${base}: ${descripcion}` : base;
+  }
 
+  // Actualiza en la base de datos cualquier renglón cuyos valores calculados
+  // (costo, saldo) hayan cambiado como efecto secundario de una edición o
+  // eliminación en otro punto de la secuencia — y sincroniza el monto de su
+  // partida contable ya registrada para que el Diario/Mayor sigan cuadrando.
+  async function sincronizarCambios(nuevosDatos, datosAnteriores) {
+    for (const n of nuevosDatos) {
+      const anterior = datosAnteriores.find((m) => m.id === n.id);
+      if (!anterior) continue;
+
+      const cambioCosto = distinto(anterior.costo_total, n.costo_total);
+      const cambioSaldo =
+        distinto(anterior.saldo_cantidad, n.saldo_cantidad) ||
+        distinto(anterior.saldo_costo_unitario, n.saldo_costo_unitario) ||
+        distinto(anterior.saldo_costo_total, n.saldo_costo_total) ||
+        distinto(anterior.costo_unitario, n.costo_unitario);
+
+      if (!cambioCosto && !cambioSaldo) continue;
+
+      await supabase
+        .from("kardex_movimientos")
+        .update({
+          costo_unitario: n.costo_unitario,
+          costo_total: n.costo_total,
+          saldo_cantidad: n.saldo_cantidad,
+          saldo_costo_unitario: n.saldo_costo_unitario,
+          saldo_costo_total: n.saldo_costo_total,
+        })
+        .eq("id", n.id);
+
+      if (cambioCosto && n.transaccion_id) {
+        const { data: movs } = await supabase
+          .from("movimientos")
+          .select("id, debe, haber")
+          .eq("transaccion_id", n.transaccion_id);
+        for (const mv of movs || []) {
+          if (Number(mv.debe) > 0) {
+            await supabase.from("movimientos").update({ debe: n.costo_total }).eq("id", mv.id);
+          } else if (Number(mv.haber) > 0) {
+            await supabase.from("movimientos").update({ haber: n.costo_total }).eq("id", mv.id);
+          }
+        }
+      }
+    }
+  }
+
+  async function crearMovimiento() {
     const cantidad = Number(form.cantidad);
-    if (!cantidad || cantidad <= 0) {
-      setErrorMov("La cantidad debe ser mayor que cero.");
+    const candidato = {
+      id: "NUEVO",
+      tipo: form.tipo,
+      fecha: form.fecha,
+      cantidad,
+      costo_unitario: form.tipo === "entrada" ? Number(form.costoUnitario) : 0,
+      descripcion: form.descripcion.trim() || null,
+      created_at: new Date().toISOString(),
+    };
+    const lista = [...movimientos, candidato].sort(ordenarKardex);
+    const { error, resultado } = recalcularSecuencia(lista);
+    if (error) {
+      setErrorMov(error);
       return;
     }
+    const nuevo = resultado.find((r) => r.id === "NUEVO");
 
-    let costoUnitario, costoTotal, nuevaCantidad, nuevoCostoTotal, nuevoCostoUnitario;
-    let cuentaDebe, cuentaHaber;
-
-    if (form.tipo === "entrada") {
-      costoUnitario = Number(form.costoUnitario);
-      if (!costoUnitario || costoUnitario <= 0) {
-        setErrorMov("El costo unitario debe ser mayor que cero.");
-        return;
-      }
-      if (!form.cuentaContraria) {
-        setErrorMov("Selecciona con qué se pagó (cuenta contraria: Caja, Bancos, Cuentas por Pagar, etc.).");
-        return;
-      }
-      costoTotal = cantidad * costoUnitario;
-      nuevaCantidad = saldo.cantidad + cantidad;
-      nuevoCostoTotal = saldo.costoTotal + costoTotal;
-      nuevoCostoUnitario = nuevaCantidad > 0 ? nuevoCostoTotal / nuevaCantidad : 0;
-      cuentaDebe = producto.cuenta_inventario_id;
-      cuentaHaber = form.cuentaContraria;
-    } else {
-      if (cantidad > saldo.cantidad) {
-        setErrorMov(
-          `No hay suficiente inventario: el saldo actual es ${saldo.cantidad} unidades.`
-        );
-        return;
-      }
-      costoUnitario = saldo.costoUnitario;
-      costoTotal = cantidad * costoUnitario;
-      nuevaCantidad = saldo.cantidad - cantidad;
-      nuevoCostoTotal = saldo.costoTotal - costoTotal;
-      nuevoCostoUnitario = nuevaCantidad > 0 ? nuevoCostoTotal / nuevaCantidad : 0;
-      cuentaDebe = producto.cuenta_costo_venta_id;
-      cuentaHaber = producto.cuenta_inventario_id;
-    }
-
-    setGuardandoMov(true);
-
-    // Número de partida siguiente para esta empresa
     const { data: ultimaPartida } = await supabase
       .from("transacciones")
       .select("numero_partida")
@@ -164,64 +201,228 @@ export default function KardexPage() {
       .maybeSingle();
     const siguienteNumero = (ultimaPartida?.numero_partida || 0) + 1;
 
-    const glosa =
-      form.tipo === "entrada"
-        ? `Entrada de inventario — ${producto.nombre}${form.descripcion ? `: ${form.descripcion}` : ""}`
-        : `Salida de inventario (costo de venta) — ${producto.nombre}${form.descripcion ? `: ${form.descripcion}` : ""}`;
-
     const { data: transaccion, error: errTx } = await supabase
       .from("transacciones")
       .insert({
         empresa_id: empresaId,
-        fecha: form.fecha,
-        descripcion: glosa,
+        fecha: candidato.fecha,
+        descripcion: glosaMovimiento(candidato.tipo, candidato.descripcion),
         numero_partida: siguienteNumero,
       })
       .select()
       .single();
-
     if (errTx) {
       setErrorMov("No se pudo registrar la partida: " + errTx.message);
-      setGuardandoMov(false);
       return;
     }
 
-    const { error: errMov } = await supabase.from("movimientos").insert([
-      { transaccion_id: transaccion.id, cuenta_id: cuentaDebe, debe: costoTotal, haber: 0 },
-      { transaccion_id: transaccion.id, cuenta_id: cuentaHaber, debe: 0, haber: costoTotal },
-    ]);
+    const cuentaDebe = form.tipo === "entrada" ? producto.cuenta_inventario_id : producto.cuenta_costo_venta_id;
+    const cuentaHaber = form.tipo === "entrada" ? form.cuentaContraria : producto.cuenta_inventario_id;
 
+    const { error: errMov } = await supabase.from("movimientos").insert([
+      { transaccion_id: transaccion.id, cuenta_id: cuentaDebe, debe: nuevo.costo_total, haber: 0 },
+      { transaccion_id: transaccion.id, cuenta_id: cuentaHaber, debe: 0, haber: nuevo.costo_total },
+    ]);
     if (errMov) {
       setErrorMov("Partida creada, pero fallaron las líneas: " + errMov.message);
-      setGuardandoMov(false);
       return;
     }
 
     const { error: errKardex } = await supabase.from("kardex_movimientos").insert({
       producto_id: productoId,
-      fecha: form.fecha,
-      tipo: form.tipo,
-      descripcion: form.descripcion.trim() || null,
+      fecha: candidato.fecha,
+      tipo: candidato.tipo,
+      descripcion: candidato.descripcion,
       cantidad,
-      costo_unitario: costoUnitario,
-      costo_total: costoTotal,
-      saldo_cantidad: nuevaCantidad,
-      saldo_costo_unitario: nuevoCostoUnitario,
-      saldo_costo_total: nuevoCostoTotal,
+      costo_unitario: nuevo.costo_unitario,
+      costo_total: nuevo.costo_total,
+      saldo_cantidad: nuevo.saldo_cantidad,
+      saldo_costo_unitario: nuevo.saldo_costo_unitario,
+      saldo_costo_total: nuevo.saldo_costo_total,
       transaccion_id: transaccion.id,
     });
-
-    setGuardandoMov(false);
-
     if (errKardex) {
-      setErrorMov(
-        "La partida contable sí se registró, pero falló el renglón del kardex: " + errKardex.message
-      );
+      setErrorMov("La partida se registró, pero falló el renglón del kardex: " + errKardex.message);
       return;
     }
 
+    await sincronizarCambios(
+      resultado.filter((r) => r.id !== "NUEVO"),
+      movimientos
+    );
+
     setForm(nuevoMovimientoVacio());
     cargarMovimientos(productoId);
+    cargarProductos();
+  }
+
+  function empezarEdicionMovimiento(m) {
+    setErrorMov(null);
+    setEditandoMovId(m.id);
+    setForm({
+      tipo: m.tipo,
+      fecha: m.fecha,
+      cantidad: String(m.cantidad),
+      costoUnitario: m.tipo === "entrada" ? String(m.costo_unitario) : "",
+      cuentaContraria: "",
+      descripcion: m.descripcion || "",
+    });
+
+    if (m.tipo === "entrada" && m.transaccion_id) {
+      supabase
+        .from("movimientos")
+        .select("cuenta_id, haber")
+        .eq("transaccion_id", m.transaccion_id)
+        .then(({ data }) => {
+          const filaHaber = (data || []).find((r) => Number(r.haber) > 0);
+          if (filaHaber) {
+            setForm((f) => ({ ...f, cuentaContraria: filaHaber.cuenta_id }));
+          }
+        });
+    }
+  }
+
+  function cancelarEdicionMovimiento() {
+    setEditandoMovId(null);
+    setForm(nuevoMovimientoVacio());
+    setErrorMov(null);
+  }
+
+  async function guardarEdicionMovimiento() {
+    const cantidad = Number(form.cantidad);
+    const original = movimientos.find((m) => m.id === editandoMovId);
+    if (!original) return;
+
+    const editado = {
+      ...original,
+      tipo: form.tipo,
+      fecha: form.fecha,
+      cantidad,
+      costo_unitario: form.tipo === "entrada" ? Number(form.costoUnitario) : original.costo_unitario,
+      descripcion: form.descripcion.trim() || null,
+    };
+    const lista = [...movimientos.filter((m) => m.id !== editandoMovId), editado].sort(ordenarKardex);
+    const { error, resultado } = recalcularSecuencia(lista);
+    if (error) {
+      setErrorMov(error);
+      return;
+    }
+    const nuevo = resultado.find((r) => r.id === editandoMovId);
+
+    if (original.transaccion_id) {
+      await supabase
+        .from("transacciones")
+        .update({
+          fecha: editado.fecha,
+          descripcion: glosaMovimiento(editado.tipo, editado.descripcion),
+        })
+        .eq("id", original.transaccion_id);
+
+      const { data: movs } = await supabase
+        .from("movimientos")
+        .select("id, debe, haber")
+        .eq("transaccion_id", original.transaccion_id);
+      const filaDebe = (movs || []).find((r) => Number(r.debe) > 0);
+      const filaHaber = (movs || []).find((r) => Number(r.haber) > 0);
+      const cuentaDebe =
+        editado.tipo === "entrada" ? producto.cuenta_inventario_id : producto.cuenta_costo_venta_id;
+      const cuentaHaber = editado.tipo === "entrada" ? form.cuentaContraria : producto.cuenta_inventario_id;
+      if (filaDebe) {
+        await supabase
+          .from("movimientos")
+          .update({ debe: nuevo.costo_total, cuenta_id: cuentaDebe })
+          .eq("id", filaDebe.id);
+      }
+      if (filaHaber) {
+        await supabase
+          .from("movimientos")
+          .update({ haber: nuevo.costo_total, cuenta_id: cuentaHaber })
+          .eq("id", filaHaber.id);
+      }
+    }
+
+    await supabase
+      .from("kardex_movimientos")
+      .update({
+        tipo: editado.tipo,
+        fecha: editado.fecha,
+        descripcion: editado.descripcion,
+        cantidad: editado.cantidad,
+        costo_unitario: nuevo.costo_unitario,
+        costo_total: nuevo.costo_total,
+        saldo_cantidad: nuevo.saldo_cantidad,
+        saldo_costo_unitario: nuevo.saldo_costo_unitario,
+        saldo_costo_total: nuevo.saldo_costo_total,
+      })
+      .eq("id", editandoMovId);
+
+    await sincronizarCambios(
+      resultado.filter((r) => r.id !== editandoMovId),
+      movimientos
+    );
+
+    cancelarEdicionMovimiento();
+    cargarMovimientos(productoId);
+    cargarProductos();
+  }
+
+  async function eliminarMovimiento(m) {
+    const confirmado = confirm(
+      `¿Eliminar este movimiento del ${m.fecha}? Esto recalculará el costo promedio de los movimientos posteriores y su partida contable se eliminará.`
+    );
+    if (!confirmado) return;
+
+    const lista = movimientos.filter((x) => x.id !== m.id);
+    const { error, resultado } = recalcularSecuencia(lista);
+    if (error) {
+      alert("No se puede eliminar: " + error);
+      return;
+    }
+
+    if (m.transaccion_id) {
+      await supabase.from("transacciones").delete().eq("id", m.transaccion_id);
+    }
+    await supabase.from("kardex_movimientos").delete().eq("id", m.id);
+
+    await sincronizarCambios(resultado, movimientos);
+
+    if (editandoMovId === m.id) cancelarEdicionMovimiento();
+    cargarMovimientos(productoId);
+    cargarProductos();
+  }
+
+  async function registrarMovimiento(e) {
+    e.preventDefault();
+    setErrorMov(null);
+
+    const cantidad = Number(form.cantidad);
+    if (!cantidad || cantidad <= 0) {
+      setErrorMov("La cantidad debe ser mayor que cero.");
+      return;
+    }
+    if (form.tipo === "entrada") {
+      if (!Number(form.costoUnitario) || Number(form.costoUnitario) <= 0) {
+        setErrorMov("El costo unitario debe ser mayor que cero.");
+        return;
+      }
+      if (!form.cuentaContraria) {
+        setErrorMov(
+          "Selecciona con qué se pagó (cuenta contraria: Caja, Bancos, Cuentas por Pagar, etc.)."
+        );
+        return;
+      }
+    }
+
+    setGuardandoMov(true);
+    try {
+      if (editandoMovId) {
+        await guardarEdicionMovimiento();
+      } else {
+        await crearMovimiento();
+      }
+    } finally {
+      setGuardandoMov(false);
+    }
   }
 
   function exportar() {
@@ -412,6 +613,21 @@ export default function KardexPage() {
               </div>
 
               <section className="bg-[#F7F4EA] border border-paperLine rounded-sm p-4 mb-6 no-print">
+                {editandoMovId && (
+                  <div className="mb-3 bg-brass/10 border border-brass/40 rounded-sm px-3 py-2 text-xs flex items-center justify-between">
+                    <span>
+                      Editando un movimiento existente — al guardar se recalculará el costo
+                      promedio de los movimientos posteriores.
+                    </span>
+                    <button
+                      onClick={cancelarEdicionMovimiento}
+                      className="text-inkSoft hover:text-ink underline underline-offset-2 ml-3 whitespace-nowrap"
+                    >
+                      Cancelar edición
+                    </button>
+                  </div>
+                )}
+
                 <div className="flex gap-2 mb-3">
                   <button
                     type="button"
@@ -513,13 +729,28 @@ export default function KardexPage() {
 
                   {errorMov && <p className="text-sm text-rust">{errorMov}</p>}
 
-                  <button
-                    type="submit"
-                    disabled={guardandoMov}
-                    className="bg-ink text-paper px-4 py-2 rounded-sm text-sm font-medium hover:bg-[#2C3A52] transition-colors disabled:opacity-60"
-                  >
-                    {guardandoMov ? "Registrando…" : "Registrar movimiento"}
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="submit"
+                      disabled={guardandoMov}
+                      className="bg-ink text-paper px-4 py-2 rounded-sm text-sm font-medium hover:bg-[#2C3A52] transition-colors disabled:opacity-60"
+                    >
+                      {guardandoMov
+                        ? "Guardando…"
+                        : editandoMovId
+                        ? "Guardar cambios"
+                        : "Registrar movimiento"}
+                    </button>
+                    {editandoMovId && (
+                      <button
+                        type="button"
+                        onClick={cancelarEdicionMovimiento}
+                        className="text-sm text-inkSoft hover:text-ink underline underline-offset-2"
+                      >
+                        Cancelar
+                      </button>
+                    )}
+                  </div>
                 </form>
               </section>
 
@@ -530,7 +761,7 @@ export default function KardexPage() {
                 <p className="text-inkSoft text-sm">Todavía no hay movimientos para este producto.</p>
               ) : (
                 <div className="bg-[#F7F4EA] border border-paperLine rounded-sm overflow-x-auto">
-                  <table className="w-full text-sm min-w-[820px]">
+                  <table className="w-full text-sm min-w-[920px]">
                     <thead>
                       <tr className="bg-ink text-paper text-center">
                         <th rowSpan={2} className="px-2 py-2 font-medium align-bottom text-left">
@@ -548,6 +779,7 @@ export default function KardexPage() {
                         <th colSpan={3} className="px-2 py-1 font-medium border-l border-paper/20">
                           Saldos
                         </th>
+                        <th rowSpan={2} className="px-2 py-2 font-medium align-bottom no-print"></th>
                       </tr>
                       <tr className="bg-ink text-paper text-center text-xs">
                         <th className="px-2 py-1 font-normal border-l border-paper/20">Cant.</th>
@@ -563,7 +795,12 @@ export default function KardexPage() {
                     </thead>
                     <tbody>
                       {movimientos.map((m) => (
-                        <tr key={m.id} className="border-t border-paperLine text-right">
+                        <tr
+                          key={m.id}
+                          className={`border-t border-paperLine text-right ${
+                            editandoMovId === m.id ? "bg-brass/10" : ""
+                          }`}
+                        >
                           <td className="px-2 py-1.5 text-left whitespace-nowrap">{m.fecha}</td>
                           <td className="px-2 py-1.5 text-left text-inkSoft">{m.descripcion}</td>
                           <td className="px-2 py-1.5 font-num border-l border-paperLine">
@@ -592,6 +829,20 @@ export default function KardexPage() {
                           </td>
                           <td className="px-2 py-1.5 font-num">
                             {formatoMoneda(m.saldo_costo_total)}
+                          </td>
+                          <td className="px-2 py-1.5 text-left no-print whitespace-nowrap">
+                            <button
+                              onClick={() => empezarEdicionMovimiento(m)}
+                              className="text-brassDark text-xs font-medium hover:underline mr-2"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              onClick={() => eliminarMovimiento(m)}
+                              className="text-rust text-xs hover:underline"
+                            >
+                              Eliminar
+                            </button>
                           </td>
                         </tr>
                       ))}
