@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useEmpresa } from "@/lib/EmpresaContext";
 import { obtenerCuentasConMovimientos, formatoMoneda } from "@/lib/contabilidad";
+import { nombreCuentaMayor } from "@/lib/cuentasMayor";
 import CuentaCombobox from "@/lib/CuentaCombobox";
 import { exportarAExcel } from "@/lib/exportarExcel";
 
@@ -30,28 +31,61 @@ export default function MayorPage() {
     return <p className="text-inkSoft text-sm">Cargando mayor…</p>;
   }
 
-  const cuentasAMostrar =
-    cuentaId === "todas" ? datos : datos.filter((c) => c.id === cuentaId);
+  const modoAgrupado = cuentaId === "todas";
 
-  const conMovimientos = cuentasAMostrar.filter((c) => (c.movimientos || []).length > 0);
+  const conMovimientos = datos
+    .filter((c) => (modoAgrupado ? true : c.id === cuentaId))
+    .filter((c) => (c.movimientos || []).length > 0);
+
+  // Modo agrupado: acumula todas las sub-cuentas bajo su cuenta de mayor
+  // (los primeros 4 dígitos del código), como un libro mayor de resumen.
+  const gruposMayor = [];
+  if (modoAgrupado) {
+    const porCodigo4 = new Map();
+    for (const cuenta of conMovimientos) {
+      const codigo4 = cuenta.codigo.slice(0, 4);
+      if (!porCodigo4.has(codigo4)) {
+        porCodigo4.set(codigo4, {
+          codigo4,
+          nombre: nombreCuentaMayor(codigo4) || codigo4,
+          clase: cuenta.clase,
+          movimientos: [],
+        });
+      }
+      const grupo = porCodigo4.get(codigo4);
+      for (const m of cuenta.movimientos) {
+        grupo.movimientos.push({ ...m, cuentaOrigen: cuenta });
+      }
+    }
+    gruposMayor.push(
+      ...[...porCodigo4.values()].sort((a, b) => a.codigo4.localeCompare(b.codigo4))
+    );
+  }
 
   function exportarMayor() {
     const filas = [
-      ["Cuenta", "Partida N.°", "Fecha", "Descripción", "Debe", "Haber", "Saldo"],
+      ["Cuenta", "Partida N.°", "Fecha", "Sub-cuenta", "Debe", "Haber", "Saldo"],
     ];
-    for (const cuenta of conMovimientos) {
-      const movs = [...cuenta.movimientos].sort(
+    const grupos = modoAgrupado
+      ? gruposMayor
+      : conMovimientos.map((c) => ({
+          codigo4: c.codigo,
+          nombre: c.nombre,
+          movimientos: c.movimientos.map((m) => ({ ...m, cuentaOrigen: c })),
+        }));
+    for (const grupo of grupos) {
+      const movs = [...grupo.movimientos].sort(
         (a, b) => (a.transacciones?.numero_partida ?? 0) - (b.transacciones?.numero_partida ?? 0)
       );
       let saldo = 0;
-      filas.push([`${cuenta.codigo} — ${cuenta.nombre}`]);
+      filas.push([`${grupo.codigo4} — ${grupo.nombre}`]);
       for (const m of movs) {
         saldo += Number(m.debe) - Number(m.haber);
         filas.push([
           "",
           m.transacciones?.numero_partida,
           m.transacciones?.fecha,
-          "Movimientos del día",
+          modoAgrupado ? `${m.cuentaOrigen.codigo} — ${m.cuentaOrigen.nombre}` : "Movimientos del día",
           m.debe > 0 ? m.debe : "",
           m.haber > 0 ? m.haber : "",
           saldo,
@@ -61,6 +95,15 @@ export default function MayorPage() {
     }
     exportarAExcel("libro-mayor", [{ nombre: "Libro Mayor", filas }]);
   }
+
+  const tarjetas = modoAgrupado
+    ? gruposMayor
+    : conMovimientos.map((c) => ({
+        codigo4: c.codigo,
+        nombre: c.nombre,
+        clase: c.clase,
+        movimientos: c.movimientos.map((m) => ({ ...m, cuentaOrigen: c })),
+      }));
 
   return (
     <div>
@@ -89,25 +132,29 @@ export default function MayorPage() {
           >
             Imprimir
           </button>
-          {conMovimientos.length > 0 && (
-            <button
-              onClick={exportarMayor}
-              className="text-xs text-ledgerDark hover:underline"
-            >
+          {tarjetas.length > 0 && (
+            <button onClick={exportarMayor} className="text-xs text-ledgerDark hover:underline">
               Exportar a Excel
             </button>
           )}
         </div>
       </div>
 
-      {conMovimientos.length === 0 ? (
+      {modoAgrupado && (
+        <p className="text-xs text-inkSoft mb-4 no-print">
+          Mostrando el Mayor acumulado por cuenta de mayor (4 dígitos). Busca una cuenta
+          específica arriba para ver su detalle individual.
+        </p>
+      )}
+
+      {tarjetas.length === 0 ? (
         <p className="text-inkSoft text-sm">
           Esta cuenta todavía no tiene movimientos registrados.
         </p>
       ) : (
         <div className="space-y-6">
-          {conMovimientos.map((cuenta) => {
-            const movs = [...cuenta.movimientos].sort((a, b) => {
+          {tarjetas.map((grupo) => {
+            const movs = [...grupo.movimientos].sort((a, b) => {
               const fa = a.transacciones?.numero_partida ?? 0;
               const fb = b.transacciones?.numero_partida ?? 0;
               return fa - fb;
@@ -124,23 +171,27 @@ export default function MayorPage() {
 
             return (
               <div
-                key={cuenta.id}
+                key={grupo.codigo4}
                 className="bg-[#F7F4EA] border border-paperLine rounded-sm overflow-hidden"
               >
                 <div className="px-4 py-2 bg-ink text-paper text-sm font-medium flex justify-between">
                   <span>
-                    {cuenta.codigo} — {cuenta.nombre}
+                    {grupo.codigo4} — {grupo.nombre}
                   </span>
-                  <span className="text-paper/70 text-xs uppercase tracking-wide">
-                    {cuenta.clase}
-                  </span>
+                  {grupo.clase && (
+                    <span className="text-paper/70 text-xs uppercase tracking-wide">
+                      {grupo.clase}
+                    </span>
+                  )}
                 </div>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-xs text-inkSoft border-b border-paperLine">
                       <th className="px-3 py-2 font-medium">Partida</th>
                       <th className="px-3 py-2 font-medium">Fecha</th>
-                      <th className="px-3 py-2 font-medium">Descripción</th>
+                      <th className="px-3 py-2 font-medium">
+                        {modoAgrupado ? "Sub-cuenta" : "Descripción"}
+                      </th>
                       <th className="px-3 py-2 font-medium w-24 text-right">Debe</th>
                       <th className="px-3 py-2 font-medium w-24 text-right">Haber</th>
                       <th className="px-3 py-2 font-medium w-28 text-right">Saldo</th>
@@ -153,7 +204,11 @@ export default function MayorPage() {
                           N.° {m.transacciones?.numero_partida}
                         </td>
                         <td className="px-3 py-1.5">{m.transacciones?.fecha}</td>
-                        <td className="px-3 py-1.5 text-inkSoft">Movimientos del día</td>
+                        <td className="px-3 py-1.5 text-inkSoft">
+                          {modoAgrupado
+                            ? `${m.cuentaOrigen.codigo} — ${m.cuentaOrigen.nombre}`
+                            : "Movimientos del día"}
+                        </td>
                         <td className="px-3 py-1.5 font-num text-right tabular">
                           {m.debe > 0 ? formatoMoneda(m.debe) : ""}
                         </td>
