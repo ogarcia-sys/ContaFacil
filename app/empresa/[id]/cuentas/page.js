@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useEmpresa } from "@/lib/EmpresaContext";
 import { CATALOGO_COMPLETO } from "@/lib/catalogoCuentas";
+import { exportarAExcel } from "@/lib/exportarExcel";
+import * as XLSX from "xlsx";
 
 const CLASES = ["Activo", "Pasivo", "Capital", "Ingreso", "Costo", "Gasto"];
 
@@ -21,10 +23,90 @@ export default function CuentasPage() {
   const [guardando, setGuardando] = useState(false);
   const [importando, setImportando] = useState(false);
   const [mensajeImport, setMensajeImport] = useState(null);
+  const [importandoArchivo, setImportandoArchivo] = useState(false);
+  const [mensajeArchivo, setMensajeArchivo] = useState(null);
+  const inputArchivoRef = useRef(null);
 
   const faltantes = CATALOGO_COMPLETO.filter(
     (c) => !cuentas.some((existente) => existente.codigo === c.codigo)
   );
+
+  function exportarCatalogo() {
+    const filas = [
+      ["Código", "Nombre", "Clase", "Saldo normal"],
+      ...cuentas.map((c) => [c.codigo, c.nombre, c.clase, c.tipo_saldo]),
+    ];
+    exportarAExcel("catalogo-de-cuentas", [{ nombre: "Catálogo de Cuentas", filas }]);
+  }
+
+  function normalizarClase(valor) {
+    const v = String(valor || "").trim().toLowerCase();
+    return CLASES.find((cl) => cl.toLowerCase() === v) || null;
+  }
+
+  function normalizarSaldo(valor) {
+    const v = String(valor || "").trim().toLowerCase();
+    if (v.startsWith("deudor")) return "deudor";
+    if (v.startsWith("acreedor")) return "acreedor";
+    return null;
+  }
+
+  async function importarDesdeArchivo(e) {
+    const archivo = e.target.files?.[0];
+    if (!archivo) return;
+    setMensajeArchivo(null);
+    setImportandoArchivo(true);
+
+    try {
+      const buffer = await archivo.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: "array" });
+      const hoja = wb.Sheets[wb.SheetNames[0]];
+      const filas = XLSX.utils.sheet_to_json(hoja, { header: 1 });
+
+      const nuevas = [];
+      const invalidas = [];
+      for (let i = 1; i < filas.length; i++) {
+        const [codigoRaw, nombreRaw, claseRaw, saldoRaw] = filas[i] || [];
+        const codigo = String(codigoRaw || "").trim();
+        const nombre = String(nombreRaw || "").trim();
+        if (!codigo || !nombre) continue;
+        if (cuentas.some((c) => c.codigo === codigo)) continue;
+        if (nuevas.some((c) => c.codigo === codigo)) continue;
+
+        const clase = normalizarClase(claseRaw);
+        const tipo_saldo = normalizarSaldo(saldoRaw);
+        if (!clase || !tipo_saldo) {
+          invalidas.push(codigo || `fila ${i + 1}`);
+          continue;
+        }
+        nuevas.push({ empresa_id: empresaId, codigo, nombre, clase, tipo_saldo });
+      }
+
+      if (nuevas.length > 0) {
+        const { error: err } = await supabase.from("cuentas").insert(nuevas);
+        if (err) {
+          setMensajeArchivo("No se pudo importar: " + err.message);
+          setImportandoArchivo(false);
+          if (inputArchivoRef.current) inputArchivoRef.current.value = "";
+          return;
+        }
+      }
+
+      let mensaje = `Se agregaron ${nuevas.length} cuentas nuevas desde el archivo.`;
+      if (invalidas.length > 0) {
+        mensaje += ` Se omitieron ${invalidas.length} filas con clase o saldo normal no reconocidos (${invalidas
+          .slice(0, 5)
+          .join(", ")}${invalidas.length > 5 ? "…" : ""}).`;
+      }
+      setMensajeArchivo(mensaje);
+      recargarCuentas();
+    } catch (err) {
+      setMensajeArchivo("No se pudo leer el archivo: " + err.message);
+    } finally {
+      setImportandoArchivo(false);
+      if (inputArchivoRef.current) inputArchivoRef.current.value = "";
+    }
+  }
 
   async function importarFaltantes() {
     if (faltantes.length === 0) return;
@@ -119,10 +201,29 @@ export default function CuentasPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <h2 className="font-display text-lg font-semibold">Catálogo de Cuentas</h2>
-        {faltantes.length > 0 && (
-          <div className="text-right no-print">
+        <div className="flex items-center gap-3 no-print">
+          {cuentas.length > 0 && (
+            <button
+              onClick={exportarCatalogo}
+              className="text-xs text-ledgerDark hover:underline"
+            >
+              Exportar a Excel
+            </button>
+          )}
+          <label className="text-xs text-brassDark hover:underline cursor-pointer">
+            {importandoArchivo ? "Importando…" : "Importar desde Excel"}
+            <input
+              ref={inputArchivoRef}
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={importarDesdeArchivo}
+              disabled={importandoArchivo}
+              className="hidden"
+            />
+          </label>
+          {faltantes.length > 0 && (
             <button
               onClick={importarFaltantes}
               disabled={importando}
@@ -132,18 +233,20 @@ export default function CuentasPage() {
                 ? "Importando…"
                 : `Importar ${faltantes.length} cuentas del catálogo`}
             </button>
-            {mensajeImport && (
-              <p
-                className={`text-xs mt-1 ${
-                  mensajeImport.startsWith("No se pudo") ? "text-rust" : "text-ledger"
-                }`}
-              >
-                {mensajeImport}
-              </p>
-            )}
-          </div>
-        )}
+          )}
+        </div>
       </div>
+      {(mensajeImport || mensajeArchivo) && (
+        <p
+          className={`text-xs mb-4 -mt-2 no-print ${
+            (mensajeImport || mensajeArchivo).startsWith("No se pudo")
+              ? "text-rust"
+              : "text-ledger"
+          }`}
+        >
+          {mensajeImport || mensajeArchivo}
+        </p>
+      )}
 
       <div className="bg-[#F7F4EA] border border-paperLine rounded-sm overflow-hidden mb-8">
         <table className="w-full text-sm">
