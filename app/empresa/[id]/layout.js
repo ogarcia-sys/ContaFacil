@@ -10,6 +10,8 @@ const TABS = [
   { href: "cuentas", label: "Cuentas" },
   { href: "transacciones", label: "Diario" },
   { href: "mayor", label: "Mayor" },
+  { href: "ventas", label: "Ventas" },
+  { href: "compras", label: "Compras" },
   { href: "kardex", label: "Kardex" },
   { href: "cxc", label: "Cuentas por Cobrar" },
   { href: "cxp", label: "Cuentas por Pagar" },

@@ -9,6 +9,8 @@ import {
   saldoActual,
   ordenarKardex,
   recalcularSecuencia,
+  validarCostoDocumentos,
+  sincronizarKardex,
 } from "@/lib/kardex";
 import { formatoMoneda } from "@/lib/contabilidad";
 import CuentaCombobox from "@/lib/CuentaCombobox";
@@ -128,50 +130,9 @@ export default function KardexPage() {
     return descripcion ? `${base}: ${descripcion}` : base;
   }
 
-  // Actualiza en la base de datos cualquier renglón cuyos valores calculados
-  // (costo, saldo) hayan cambiado como efecto secundario de una edición o
-  // eliminación en otro punto de la secuencia — y sincroniza el monto de su
-  // partida contable ya registrada para que el Diario/Mayor sigan cuadrando.
-  async function sincronizarCambios(nuevosDatos, datosAnteriores) {
-    for (const n of nuevosDatos) {
-      const anterior = datosAnteriores.find((m) => m.id === n.id);
-      if (!anterior) continue;
-
-      const cambioCosto = distinto(anterior.costo_total, n.costo_total);
-      const cambioSaldo =
-        distinto(anterior.saldo_cantidad, n.saldo_cantidad) ||
-        distinto(anterior.saldo_costo_unitario, n.saldo_costo_unitario) ||
-        distinto(anterior.saldo_costo_total, n.saldo_costo_total) ||
-        distinto(anterior.costo_unitario, n.costo_unitario);
-
-      if (!cambioCosto && !cambioSaldo) continue;
-
-      await supabase
-        .from("kardex_movimientos")
-        .update({
-          costo_unitario: n.costo_unitario,
-          costo_total: n.costo_total,
-          saldo_cantidad: n.saldo_cantidad,
-          saldo_costo_unitario: n.saldo_costo_unitario,
-          saldo_costo_total: n.saldo_costo_total,
-        })
-        .eq("id", n.id);
-
-      if (cambioCosto && n.transaccion_id) {
-        const { data: movs } = await supabase
-          .from("movimientos")
-          .select("id, debe, haber")
-          .eq("transaccion_id", n.transaccion_id);
-        for (const mv of movs || []) {
-          if (Number(mv.debe) > 0) {
-            await supabase.from("movimientos").update({ debe: n.costo_total }).eq("id", mv.id);
-          } else if (Number(mv.haber) > 0) {
-            await supabase.from("movimientos").update({ haber: n.costo_total }).eq("id", mv.id);
-          }
-        }
-      }
-    }
-  }
+  // La sincronización del kardex con sus partidas está en lib/kardex.js
+  // (compartida con los módulos de Ventas y Compras).
+  const sincronizarCambios = sincronizarKardex;
 
   async function crearMovimiento() {
     const cantidad = Number(form.cantidad);
@@ -188,6 +149,11 @@ export default function KardexPage() {
     const { error, resultado } = recalcularSecuencia(lista);
     if (error) {
       setErrorMov(error);
+      return;
+    }
+    const errorDoc = validarCostoDocumentos(resultado, movimientos);
+    if (errorDoc) {
+      setErrorMov(errorDoc);
       return;
     }
     const nuevo = resultado.find((r) => r.id === "NUEVO");
@@ -307,6 +273,11 @@ export default function KardexPage() {
       setErrorMov(error);
       return;
     }
+    const errorDoc = validarCostoDocumentos(resultado, movimientos);
+    if (errorDoc) {
+      setErrorMov(errorDoc);
+      return;
+    }
     const nuevo = resultado.find((r) => r.id === editandoMovId);
 
     if (original.transaccion_id) {
@@ -376,6 +347,11 @@ export default function KardexPage() {
     const { error, resultado } = recalcularSecuencia(lista);
     if (error) {
       alert("No se puede eliminar: " + error);
+      return;
+    }
+    const errorDoc = validarCostoDocumentos(resultado, movimientos);
+    if (errorDoc) {
+      alert("No se puede eliminar: " + errorDoc);
       return;
     }
 
@@ -831,6 +807,12 @@ export default function KardexPage() {
                             {formatoMoneda(m.saldo_costo_total)}
                           </td>
                           <td className="px-2 py-1.5 text-left no-print whitespace-nowrap">
+                            {m.venta_id || m.compra_id ? (
+                              <span className="text-xs text-inkSoft" title="Se edita o elimina desde su módulo de origen">
+                                {m.venta_id ? "Desde Ventas" : "Desde Compras"}
+                              </span>
+                            ) : (
+                            <>
                             <button
                               onClick={() => empezarEdicionMovimiento(m)}
                               className="text-brassDark text-xs font-medium hover:underline mr-2"
@@ -843,6 +825,8 @@ export default function KardexPage() {
                             >
                               Eliminar
                             </button>
+                            </>
+                            )}
                           </td>
                         </tr>
                       ))}
